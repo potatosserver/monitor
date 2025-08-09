@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系統監控面板</title>
+    <!-- 引入 Tailwind CSS 確保響應式設計和美觀 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Chart.js 以繪製動態圖表 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
+    <style>
+        /* 基礎樣式和字體設置 */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        /* 將圖表容器設定為響應式 */
+        .chart-container {
+            position: relative;
+            height: 250px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8 bg-slate-900 text-white min-h-screen flex items-center justify-center">
+    <div class="w-full max-w-5xl">
+        <!-- 標題部分 -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl md:text-5xl font-extrabold text-white">
+                系統監控面板
+            </h1>
+            <p class="text-sm sm:text-base text-slate-400 mt-2">
+                即時監測來自後端伺服器的 CPU 和記憶體使用率
+            </p>
+        </header>
+
+        <!-- 設定介面 - 預設顯示 -->
+        <div id="setup-section" class="mb-8">
+            <div class="flex flex-col md:flex-row items-center justify-center gap-4">
+                <input type="text" id="backend-url" placeholder="輸入後端網址，例如: https://your-backend.com 或 https://your-backend.com/data" class="w-full md:w-2/3 px-4 py-2 rounded-xl bg-slate-800 text-white border border-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500 transition-colors">
+                <button id="connect-button" class="w-full md:w-1/3 px-6 py-2 rounded-xl font-bold bg-sky-600 hover:bg-sky-700 transition-colors duration-300">
+                    連接
+                </button>
+            </div>
+            <p id="status-message" class="text-center text-sm mt-4 text-slate-400">請輸入後端網址並點擊連接。</p>
+        </div>
+
+        <!-- 監控面板 - 預設隱藏 -->
+        <div id="monitoring-section" class="hidden">
+            <div class="flex justify-end mb-4">
+                <button id="disconnect-button" class="px-4 py-2 rounded-xl font-bold text-slate-400 border border-slate-700 hover:bg-slate-700 transition-colors duration-300">
+                    斷開連接
+                </button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                <!-- CPU 監控卡片 -->
+                <div class="bg-slate-800 p-6 rounded-3xl shadow-lg border border-slate-700 hover:shadow-2xl transition-all duration-300">
+                    <h2 class="text-xl sm:text-2xl font-bold mb-4 flex items-center">
+                        <span class="mr-2">💻</span> CPU 使用率
+                    </h2>
+                    <div class="flex items-end mb-4">
+                        <span id="cpu-value" class="text-5xl sm:text-6xl font-bold text-sky-400">0</span>
+                        <span class="text-2xl sm:text-3xl text-slate-400 ml-2">%</span>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="cpuChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 記憶體監控卡片 -->
+                <div class="bg-slate-800 p-6 rounded-3xl shadow-lg border border-slate-700 hover:shadow-2xl transition-all duration-300">
+                    <h2 class="text-xl sm:text-2xl font-bold mb-4 flex items-center">
+                        <span class="mr-2">💾</span> 記憶體使用率
+                    </h2>
+                    <div class="flex items-end mb-4">
+                        <span id="memory-value" class="text-5xl sm:text-6xl font-bold text-teal-400">0</span>
+                        <span class="text-2xl sm:text-3xl text-slate-400 ml-2">%</span>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="memoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 等待 DOM 加載完成後再執行腳本
+        window.onload = function() {
+            // ================================================================
+            // 這段程式碼已更新，讓使用者可以自定義後端 URL 並動態連接。
+            // 監控面板在連接成功後才會顯示。
+            // ================================================================
+
+            // 取得 HTML 元素
+            const cpuValueEl = document.getElementById('cpu-value');
+            const memoryValueEl = document.getElementById('memory-value');
+            const cpuCanvas = document.getElementById('cpuChart').getContext('2d');
+            const memoryCanvas = document.getElementById('memoryChart').getContext('2d');
+            const urlInput = document.getElementById('backend-url');
+            const connectButton = document.getElementById('connect-button');
+            const disconnectButton = document.getElementById('disconnect-button');
+            const statusMessage = document.getElementById('status-message');
+            const setupSection = document.getElementById('setup-section');
+            const monitoringSection = document.getElementById('monitoring-section');
+
+            let updateInterval; // 用來儲存 setInterval 的 ID，以便之後可以清除它
+            let currentBackendUrl = 'http://127.0.0.1:3000'; // 預設後端 URL
+
+            // 從 localStorage 讀取上次使用的 URL
+            const savedUrl = localStorage.getItem('backendUrl');
+            if (savedUrl) {
+                currentBackendUrl = savedUrl;
+                urlInput.value = savedUrl;
+            } else {
+                urlInput.value = currentBackendUrl;
+            }
+
+            // 圖表設定
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    x: {
+                        display: false
+                    },
+                    y: {
+                        min: 0,
+                        max: 100,
+                        ticks: {
+                            color: '#cbd5e1',
+                            callback: function(value) {
+                                return value + '%';
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)',
+                            borderDash: [5, 5],
+                        }
+                    }
+                }
+            };
+
+            // 初始化 CPU 圖表
+            const cpuChart = new Chart(cpuCanvas, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'CPU 使用率',
+                        data: [],
+                        borderColor: '#38bdf8',
+                        backgroundColor: 'rgba(56, 189, 248, 0.2)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true,
+                        pointRadius: 0
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // 初始化記憶體圖表
+            const memoryChart = new Chart(memoryCanvas, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: '記憶體使用率',
+                        data: [],
+                        borderColor: '#2dd4bf',
+                        backgroundColor: 'rgba(45, 212, 191, 0.2)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true,
+                        pointRadius: 0
+                    }]
+                },
+                options: chartOptions
+            });
+
+            // 重置圖表資料
+            function resetCharts() {
+                cpuChart.data.labels = [];
+                cpuChart.data.datasets[0].data = [];
+                memoryChart.data.labels = [];
+                memoryChart.data.datasets[0].data = [];
+                cpuValueEl.textContent = '0';
+                memoryValueEl.textContent = '0';
+                cpuChart.update();
+                memoryChart.update();
+            }
+
+            // 從後端 API 獲取資料並更新圖表的核心函數
+            async function fetchAndUpdate() {
+                try {
+                    const targetUrl = `${currentBackendUrl}`; // 這裡直接使用 currentBackendUrl，因為它已經處理好 /data 部分
+                    console.log('嘗試連接到後端:', targetUrl);
+                    
+                    // 執行 fetch 請求，不指定任何額外的模式，讓瀏覽器自動處理 CORS
+                    const response = await fetch(targetUrl);
+
+                    // 檢查 HTTP 回應是否成功 (狀態碼 2xx)
+                    if (!response.ok) {
+                        // 如果回應狀態碼不是 2xx，則拋出錯誤
+                        let errorMessage = `HTTP 錯誤！狀態碼：${response.status}`;
+                        try {
+                            const errorData = await response.json();
+                            if (errorData.error) {
+                                errorMessage += `: ${errorData.error}`;
+                            }
+                        } catch (e) {
+                            // 如果回應不是 JSON 格式，則忽略解析錯誤
+                        }
+                        throw new Error(errorMessage);
+                    }
+
+                    // 解析 JSON 資料
+                    const data = await response.json();
+
+                    const newCpuValue = data.cpu.toFixed(1);
+                    const newMemoryValue = data.memory.toFixed(1);
+
+                    // 更新文字顯示
+                    cpuValueEl.textContent = newCpuValue;
+                    memoryValueEl.textContent = newMemoryValue;
+
+                    // 獲取當前時間戳作為圖表標籤
+                    const now = new Date().toLocaleTimeString();
+
+                    // 更新 CPU 圖表
+                    cpuChart.data.labels.push(now);
+                    cpuChart.data.datasets[0].data.push(newCpuValue);
+
+                    // 更新記憶體圖表
+                    memoryChart.data.labels.push(now);
+                    memoryChart.data.datasets[0].data.push(newMemoryValue);
+
+                    // 限制圖表顯示的資料點數量，以保持圖表流動效果
+                    const maxDataPoints = 20;
+                    if (cpuChart.data.labels.length > maxDataPoints) {
+                        cpuChart.data.labels.shift();
+                        cpuChart.data.datasets[0].data.shift();
+                    }
+                    if (memoryChart.data.labels.length > maxDataPoints) {
+                        memoryChart.data.labels.shift();
+                        memoryChart.data.datasets[0].data.shift();
+                    }
+
+                    // 重新渲染圖表
+                    cpuChart.update();
+                    memoryChart.update();
+
+                    // 如果成功獲取資料，確保狀態訊息顯示正常
+                    statusMessage.textContent = '已連接，正在監控...';
+                    statusMessage.className = 'text-center text-sm mt-4 text-green-400';
+
+                } catch (error) {
+                    // 捕獲所有 fetch 期間的錯誤，包括網路錯誤、CORS 錯誤或 JSON 解析錯誤
+                    console.error('獲取資料時發生錯誤:', error);
+                    let displayMessage = `連接失敗：${error.message}`;
+                    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                        displayMessage = '連接失敗：無法連線到後端伺服器。請確認網址正確且後端已運行。';
+                    } else if (error.message.includes('JSON')) {
+                        displayMessage = '連接失敗：後端回傳的資料格式不正確。';
+                    } else if (error.message.includes('HTTP Error')) {
+                        displayMessage = error.message; // 顯示 HTTP 錯誤碼
+                    }
+
+                    statusMessage.textContent = displayMessage;
+                    statusMessage.className = 'text-center text-sm mt-4 text-red-400';
+                    stopMonitoring(); // 連接失敗時停止監控並返回設定畫面
+                }
+            }
+            
+            // 開始監控的函數
+            function startMonitoring() {
+                // 如果已經有計時器，先清除它
+                if (updateInterval) {
+                    clearInterval(updateInterval);
+                }
+                resetCharts(); // 每次連接前重置圖表
+                // 立即執行一次以顯示資料
+                fetchAndUpdate().then(() => {
+                    // 如果第一次獲取成功，則顯示監控面板
+                    if (statusMessage.textContent.includes('連接失敗') === false) {
+                        setupSection.classList.add('hidden');
+                        monitoringSection.classList.remove('hidden');
+                        updateInterval = setInterval(fetchAndUpdate, 1000); // 每秒更新一次
+                    }
+                });
+            }
+
+            // 停止監控的函數
+            function stopMonitoring() {
+                if (updateInterval) {
+                    clearInterval(updateInterval);
+                }
+                resetCharts();
+                setupSection.classList.remove('hidden');
+                monitoringSection.classList.add('hidden');
+                statusMessage.textContent = '已斷開連接，請輸入新的後端網址。';
+                statusMessage.className = 'text-center text-sm mt-4 text-yellow-400';
+            }
+
+            // 連接按鈕點擊事件處理
+            connectButton.addEventListener('click', () => {
+                let newUrl = urlInput.value.trim(); 
+                
+                // 優先使用 https
+                if (newUrl && !newUrl.startsWith('http://') && !newUrl.startsWith('https://')) {
+                    newUrl = `https://${newUrl}`; 
+                } else if (newUrl && newUrl.startsWith('http://')) {
+                    // 如果是 http，嘗試改成 https，因為瀏覽器會阻擋 http 資源在 https 頁面中
+                    newUrl = `https://${newUrl.substring(7)}`;
+                }
+
+                // 移除任何 trailing /data，確保 currentBackendUrl 是正確的基底 URL (或直接就是完整的 API URL)
+                // 這樣在 fetchAndUpdate 時就不會重複添加 /data
+                if (newUrl.endsWith('/data')) {
+                    newUrl = newUrl.substring(0, newUrl.lastIndexOf('/data'));
+                }
+                // 再確保後面有 /data
+                if (!newUrl.endsWith('/data')) {
+                    newUrl += '/data';
+                }
+
+                if (newUrl) {
+                    currentBackendUrl = newUrl;
+                    localStorage.setItem('backendUrl', newUrl); // 將新 URL 儲存到 localStorage
+                    statusMessage.textContent = '正在連接...';
+                    statusMessage.className = 'text-center text-sm mt-4 text-yellow-400';
+                    startMonitoring(); // 重新開始監控
+                } else {
+                    statusMessage.textContent = '網址不能為空！';
+                    statusMessage.className = 'text-center text-sm mt-4 text-red-400';
+                }
+            });
+
+            // 斷開連接按鈕點擊事件處理
+            disconnectButton.addEventListener('click', () => {
+                stopMonitoring();
+            });
+
+            // 初始化時檢查是否有儲存的 URL，並嘗試連接
+            if (currentBackendUrl) {
+                // 不自動連接，等待用戶點擊連接按鈕
+            }
+        };
+    </script>
+</body>
+</html>
